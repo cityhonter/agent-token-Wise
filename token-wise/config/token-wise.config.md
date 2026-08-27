@@ -46,7 +46,8 @@ input_slim:
   # 强制精确引用：文件路径+函数/符号+行号，禁止模糊请求（如"修复 auth 的 bug"）
   force_precise_ref: true
   # 索引地图协议：auto=有就用没有就建议  require=缺失时先生成再干活  off=不使用
-  # 为什么重要：索引（几千 token）比全量代码（几万~几十万 token）便宜 1~2 个数量级
+  # 温馨提醒：Codex、Claude Code、Aider 等主流工具已内置仓库索引（repo map），
+  #           优先用工具自带能力；AI_INDEX.md 作为补充（工具覆盖不到的语言/场景）
   index_map: auto
   # 宽范围检索/扫描丢给 subagent，结果只回摘要，不污染主上下文
   use_subagent_scan: true
@@ -59,6 +60,9 @@ context_hygiene:
   # 为什么默认 60K：超过这个量，agent 开始丢失早期的关键决定
   clear_hint_threshold: 60000
   # 触发压缩/收尾建议的阈值（token）
+  # 温馨提醒：不同厂商/模型缓存 TTL 不同——Claude 系约 5 分钟（可扩展），
+  #           OpenAI 系约 5 分钟~1 小时，其余以官方文档为准。
+  #           本阈值只用于"上下文太大该收尾"的建议，与缓存 TTL 是两回事。
   compact_hint_threshold: 150000
   # 收尾时强制产出"进度小结+待办+下一步"（隔夜/切会话时防失忆+防缓存白烧）
   overnight_summary: true

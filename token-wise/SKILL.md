@@ -17,7 +17,7 @@ agent_created: true
 ## 配置加载
 
 1. 定位配置文件 `config/token-wise.config.md`（随 skill 分发，或用户自定义位置）。
-2. 读取其中 `preset`（conservative / balanced / aggressive）与各模块开关。
+2. 读取其中 `preset`（conservative / balanced / aggressive）与本次任务相关的开关；只提取所需字段，不要将整个配置文件复述进回复。
 3. 若配置缺失或字段冲突：按默认值（balanced + 全部默认开启项）执行，并在回复中说明"使用了默认配置"。
 4. 冲突裁决规则：`protected_tasks` 优先级 > 模块开关 > preset。
 
@@ -30,8 +30,13 @@ agent_created: true
 | # | 红线 | agent 行为 |
 |---|---|---|
 | R1 | 不轻易切窗口（新会话）| 检测到用户要"新开会话/重来"且当前任务未完成时，提示续同一会话更省（缓存+上下文连续）；若必须切换，先自动输出一段进度小结 |
-| R2 | 不过缓存时间（TTL）对话 | 感知会话上下文大小与持续时间，超过 `context_hygiene.compact_hint_threshold` 时建议 /compact 或收尾；收尾前**强制**产出"进度小结+待办+下一步"（受 `context_hygiene.overnight_summary` 控制）|
+| R2 | 不过缓存时间（TTL）对话 | 感知会话上下文大小与持续时间，超过 `context_hygiene.compact_hint_threshold` 时建议 /compact 或收尾；收尾前**强制**产出"进度小结+待办+下一步"（受 `context_hygiene.overnight_summary` 控制）。**任务中断后恢复**：确认在同一会话内继续即可，缓存未失效（TTL 内），不要重开会话重来 |
 | R3 | 做好索引地图 | 进入代码任务时检查 `AI_INDEX.md` 是否存在；缺失则建议生成；修改文件后提醒更新索引（受 `input_slim.index_map` 控制）|
+
+### 温馨提醒
+
+- **R2 关于缓存时间（TTL）**：不同厂商/模型的缓存时长不同——Claude 系约 5 分钟（可扩展），OpenAI 系约 5 分钟~1 小时，其余以厂商官方文档为准。不要盲信统一数值，选型时查厂商定价页。本 skill 不写死 TTL，只按 `compact_hint_threshold` 给压缩/收尾建议。
+- **R3 关于索引地图**：Codex、Claude Code、Aider 等主流工具已内置仓库索引（repo map），优先使用工具自带能力；手写 `AI_INDEX.md` 作为补充（尤其用于工具索引覆盖不到的语言或场景）。
 | R4 | 模式二：先规划后执行 | 任务复杂度高（或命中 `protected_tasks`，判定见 `references/decision-tree.md`）时，先输出方案清单，用户确认后才动手 |
 
 ### 提醒开关语义
@@ -56,6 +61,13 @@ agent_created: true
 ### 会话收尾
 1. 若配置 `context_hygiene.overnight_summary: true`：输出"进度小结 + 待办 + 下一步"。
 2. 若用户要切换新会话：先给小结（R1），再允许切换。
+
+## Token 预算（本 skill 自身的成本）
+
+- 常驻加载：SKILL.md（约 1.5K token）+ config（约 1K token）。
+- 按需加载：`references/*`（决策树/模板，每次几百 token，仅判定或取模板时读）。
+- 总常驻成本约 2~3K token/会话——这是"纪律型 skill"的固定开销，已控制在最小。
+- 极简模式：只需要红线 + 输出纪律时，删除 `config/` 与 `references/`，单文件 SKILL.md 即可运行（所有行为用内联默认值）。
 
 ## 分级闸门（L0 / L1 / L2）
 
