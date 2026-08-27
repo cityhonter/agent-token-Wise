@@ -44,6 +44,20 @@ agent_created: true
 
 ①~④ 属于无损优化，⑤~⑥ 属于有风险优化（需分级闸门），⑦ 属于效果验证。
 
+## 计费模式（Billing Mode）——缓存值多少钱，由你的付费方式决定
+
+用户分成两类，省钱杠杆完全不同，**不要一刀切**：
+
+| 模式 | 典型用户 | 缓存命中值钱吗 | skill 行为差异 |
+|---|---|---|---|
+| `api`（按量计费，默认）| API Key 直连、BYOK | **值钱**——命中部分按 10%~25% 计价 | R2 缓存提醒开启；prompt 强调静态前缀稳定、少切模型/会话 |
+| `subscription`（套餐）| Claude Pro/Max、ChatGPT Plus、企业座席 | **不值钱**——已含在套餐里 | R2 降级为纯上下文管理（不提示缓存）；评估报告不报美元，只报 token 与成功率 |
+| `auto` | 无法确定 | 未知 | 按 `api` 保守假设执行 |
+
+- 判断依据：用户按 token 付钱 → api；按月付固定费用 → subscription。
+- 配置位置：`config/token-wise.config.md` 的 `billing_mode`（懒加载会一并读取）。
+- 注意：subscription 模式仍有**上下文窗口与限流**约束，Context Hygiene（L0）照常生效，只是不把缓存当省钱工具。
+
 ## 宿主能力检测（不要假装知道不知道的东西）
 
 Agent **不一定能拿到**精确的 context token 数、cache hit/miss、TTL 剩余时间。
@@ -54,8 +68,8 @@ Agent **不一定能拿到**精确的 context token 数、cache hit/miss、TTL �
 
 ## 配置加载（懒加载协议，config 保留不删）
 
-1. 开局只查 `preset:` 与 `redlines.reminders:` 两行（约 20 token），不要整文件读入。
-2. 命中默认值（balanced + reminders: true）→ 其余走 SKILL.md 内联默认。
+1. 开局只查 `preset:`、`redlines.reminders:`、`billing_mode:` 三行（约 30 token），不要整文件读入。
+2. 命中默认值（balanced + reminders: true + api）→ 其余走 SKILL.md 内联默认。
 3. 当前任务需要具体参数（context_ratio 档位、protected_tasks、router）时，才读对应小节。
 4. 不回显全文。配置缺失/冲突 → 默认值并说明。冲突裁决：`protected_tasks` > 模块开关 > preset。
 5. 懒加载只影响上下文占用（约 1K → 约 20 token），不影响功能。
@@ -68,7 +82,7 @@ Agent **不一定能拿到**精确的 context token 数、cache hit/miss、TTL �
 | # | 红线（条件策略） | Agent 行为 |
 |---|---|---|
 | R1 | 管理上下文生命周期，不机械坚持同一会话 | 检测到"当前会话历史已变成噪音/超长"时，权衡继续 vs 整理 vs 新开：历史噪音大 + 上下文占比高 → 建议整理或新开（带小结）；否则继续。新开/切换前先输出进度小结 |
-| R2 | 关注 Prompt Cache 命中，不机械追赶 TTL | 长时间中断后重新评估：上下文很大 + 中断久 + 缓存可能失效 + 历史噪音 → 建议整理/新开；否则直接继续。**不因"超 TTL"就催用户结束会话** |
+| R2 | 关注 Prompt Cache 命中，不机械追赶 TTL | 长时间中断后重新评估：上下文很大 + 中断久 + 缓存可能失效 + 历史噪音 → 建议整理/新开；否则直接继续。**不因"超 TTL"就催用户结束会话**。`billing_mode: subscription` 时此条降级为纯上下文管理（不提示缓存） |
 | R3 | 索引按需使用 | 宿主有原生 repo map / 语义搜索 → 优先用；没有且项目复杂（>500 文件或跨模块修改）→ 才建议 `AI_INDEX.md`；小项目不强制 |
 | R4 | 复杂任务先规划后执行 | 命中 `protected_tasks` 或复杂度高 → 先输出方案清单，用户确认后才动手 |
 
@@ -153,10 +167,11 @@ savings = 1 - estimated_cost / with_default
 任务：auth 模块重构
 模型：Sonnet 4.5
 输入：32K ｜ 输出：4K ｜ 缓存命中：72% ｜ 重试：0 ｜ 修正：1
-估算成本：$0.18
+估算成本：$0.18        ← api 模式
 默认策略估算：$0.31
 节省：42% ｜ 任务成功：是
 ```
+- `billing_mode: subscription` 时：报告改为只报 token 与成功率，美元成本显示为"等效 API 值（仅参考）"。
 
 ### 数据落地
 - 记录到会话内即可；宿主支持时写入 `.token-wise/stats.json`（可用 `scripts/estimate_cost.py` 离线算账）。
@@ -164,7 +179,7 @@ savings = 1 - estimated_cost / with_default
 
 ## Token 预算（本 skill 自身的成本）
 
-- 常驻：SKILL.md（约 2K token）+ config 懒加载（约 20 token）。
+- 常驻：SKILL.md（约 2K token）+ config 懒加载（三行，约 30 token）。
 - 按需：references/*（几百 token）、config 小节（用到才读）。
 - 总常驻约 2K token/会话。极简模式：只留红线 + 输出纪律时，删 config/ 与 references/ 单文件可跑。
 

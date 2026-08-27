@@ -62,9 +62,10 @@ Conversation History（对话记录）→ Context（上下文）→ Prompt Cache
 只改一个文件：`token-wise/config/token-wise.config.md`（**保留即可，不用删**）
 
 1. **三档预设**：`preset: conservative / balanced / aggressive`
-2. **模块开关**：输出纪律、输入瘦身、上下文卫生、思考控制、路由、评估——独立开/关/调参
-3. **红线提醒开关**：见下节
-4. **懒加载协议**：默认只查 `preset` 与 `redlines.reminders` 两行（约 20 token），其余字段按需读——不影响功能
+2. **计费模式**：`billing_mode: api / subscription / auto`——API 按量付费才关心缓存命中省钱；套餐用户（Pro/Max）缓存折扣已含在月费里，skill 自动降级为纯上下文管理
+3. **模块开关**：输出纪律、输入瘦身、上下文卫生、思考控制、路由、评估——独立开/关/调参
+4. **红线提醒开关**：见下节
+5. **懒加载协议**：默认只查 `preset`、`redlines.reminders`、`billing_mode` 三行（约 30 token），其余字段按需读——不影响功能
 
 ## 红线守则（条件策略，请务必阅读）
 
@@ -78,6 +79,7 @@ Conversation History（对话记录）→ Context（上下文）→ Prompt Cache
 | R4 | 复杂任务先规划后执行 | 命中保护名单或复杂度高 → 先出方案，确认后动手 |
 
 > **温馨提醒**
+> - 切对话框：缓存命中会失效
 > - 切模型：缓存按模型/厂商隔离——同家切回（TTL 内且前缀未变）可能恢复命中，跨家完全失效；简单任务换便宜模型合理，复杂任务中途别来回切。
 > - TTL：Claude 系约 5 分钟（可扩展）、OpenAI 系约 5 分钟~1 小时，其余以官方文档为准。
 > - 任务中断后：同一会话内直接继续即可；是否整理看上下文占比与噪音，不看中断时长。
@@ -95,7 +97,7 @@ Conversation History（对话记录）→ Context（上下文）→ Prompt Cache
 
 ## 本 skill 自身的 token 成本
 
-- 常驻：SKILL.md（约 2K token）+ config 懒加载（约 20 token）。
+- 常驻：SKILL.md（约 2K token）+ config 懒加载（约 30 token，三行）。
 - 按需：references/、config 小节（用到才读）。
 - 总常驻约 **2K token/会话**。极简模式：只需红线 + 输出纪律时，删 config/ 和 references/，单文件 SKILL.md 可跑。
 
@@ -103,6 +105,9 @@ Conversation History（对话记录）→ Context（上下文）→ Prompt Cache
 
 **Q: aggressive 档会降智吗？**
 A: 会，在某些任务上有风险。它允许 L2（compact/降档）。发现质量下降就退回 balanced 或 conservative。
+
+**Q: 我是套餐用户（Pro/Max），还需要关心缓存吗？**
+A: 不需要。把 `billing_mode` 设为 `subscription`——缓存折扣已含在月费里，skill 会关掉缓存提醒、报告不报美元，只专注上下文管理（这部分对你依然有意义：套餐同样受上下文窗口和限流约束）。
 
 **Q: 同一个对话切换模型会影响缓存吗？**
 A: 会。缓存按模型/厂商隔离——同家切回（TTL 内且前缀未变）可能恢复命中；不同家完全失效。复杂任务中途不要来回切。
