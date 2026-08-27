@@ -4,95 +4,173 @@ description: "Save AI model tokens and cost without degrading quality. Use when 
 agent_created: true
 ---
 
-# Token-Wise（省 token 不降智）
+# Token-Wise（Agent Cost Optimization Framework）
 
-> 目标：在不降低模型输出质量的前提下，系统性地减少 token 用量与成本。
+> 目标：**在质量约束下**减少不必要的 token 与推理成本。
+> 核心理念：**Context Hygiene（有效上下文管理）**，不是"别开新会话"。
+> 一句话：先减少无效上下文和重复工作，再减少输出废话，最后才动模型能力。
 
-## 核心原则（三条铁律）
+## 核心概念（先分清四层，别混为一谈）
 
-1. **无损优先**：省 token 的正确姿势是"少带无关的东西"，不是"把该带的东西压缩"。
-2. **省钱指标 = 每件完成的事的成本**，不是每个 token 的成本。返工、重试、瞎改三件事烧掉的钱，永远大于 token 差价。
-3. **有损手段必须分级授权**：默认只开无损层（L0），有损层（L1/L2）按配置与任务类型放行。
-
-## 配置加载（解法 3：懒加载 + 只提取，config 保留不删）
-
-`config/token-wise.config.md` 文件**保留**，但按懒加载协议读取，避免全文进上下文：
-
-1. **开局只查两行**：用搜索/grep 读取 `preset:` 与 `redlines.reminders:` 两行（约 20 token），不要整文件读入上下文。
-2. **命中默认值则跳过**：`preset: balanced` 且 `reminders: true`（即未定制）时，其余全部走 SKILL.md 内联默认值，config 不再读。
-3. **按需读小节**：仅当当前任务需要具体参数（阈值 `clear_hint_threshold` / `compact_hint_threshold`、`protected_tasks` 豁免表、`router` 模型映射）时，才读取对应小节。
-4. **不回显**：任何情况下不把配置文件内容复述进回复，只在使用时引用数值。
-5. 若配置文件缺失或字段冲突：按默认值（balanced + 全部默认开启项）执行，并在回复中说明"使用了默认配置"。
-6. 冲突裁决规则：`protected_tasks` 优先级 > 模块开关 > preset。
-7. **影响说明**：懒加载只影响上下文占用（约 1K token → 约 20 token），不影响功能——用到哪个参数就读哪个，全部字段仍可生效。
-
-## 红线守则（不可违反，行为级约束）
-
-> 红线本身**不可通过配置关闭**；配置只控制 agent 是否**主动提醒**（见 `redlines.reminders`）。
-> 提醒关闭 ≠ 红线失效——行为依然遵守，只是不打扰用户。
-> 文档（README）中已强调：**红线建议用户自己遵守，效果最好**。
-
-| # | 红线 | agent 行为 |
+| 层 | 是什么 | 生命周期 |
 |---|---|---|
-| R1 | 不轻易切窗口（新会话）| 检测到用户要"新开会话/重来"且当前任务未完成时，提示续同一会话更省（缓存+上下文连续）；若必须切换，先自动输出一段进度小结。**切换模型时提醒**：缓存按模型隔离——同家切回（TTL 内且前缀未变）可能恢复命中，跨家切换完全失效 |
-| R2 | 不过缓存时间（TTL）对话 | 感知会话上下文大小与持续时间，超过 `context_hygiene.compact_hint_threshold` 时建议 /compact 或收尾；收尾前**强制**产出"进度小结+待办+下一步"（受 `context_hygiene.overnight_summary` 控制）。**任务中断后恢复**：确认在同一会话内继续即可，缓存未失效（TTL 内），不要重开会话重来 |
-| R3 | 做好索引地图 | 进入代码任务时检查 `AI_INDEX.md` 是否存在；缺失则建议生成；修改文件后提醒更新索引（受 `input_slim.index_map` 控制）|
+| Conversation History | 对话记录，存在会话里 | 会话一直保留 |
+| Context | 当前喂给模型的上下文窗口内容 | 随会话增长，可被整理/清空 |
+| Prompt Cache | 服务端前缀缓存（命中打折） | 短（5min~1h 级，按厂商），**过期只影响计费，不影响上下文** |
+| Token Billing | 计费 | 每轮按输入+输出算 |
+
+**关键结论**：缓存过期 ≠ 上下文丢失 ≠ 必须开新会话。四层独立，不要把它们当成一个东西。
+
+## 核心原则
+
+1. **省钱指标 = 每件完成的事的成本（Cost per successful task）**，不是每 token 成本。
+   ```
+   Total Cost = Input + Output + Cache + Retry + Correction + Human Review
+   ```
+   多花 20% token 一次做对，远好于省 30% token 却返工 2 次。
+2. **优化优先级**（从高到低）：
+   减少无效上下文 → 减少重复工作 → 减少输出废话 → 合理利用缓存 → 模型路由 → compact/降 reasoning。
+3. **有损手段分级授权**：默认只开 L0（Context 优化）；L1/L2 按配置与任务类型放行。
+
+## 七问自检（每轮执行前快速过一遍）
+
+1. 我是不是把不需要的信息给 AI 了？（无效上下文）
+2. AI 是不是重复读取了已经知道的信息？（重复工作）
+3. 当前历史是不是已经变成噪音？（上下文污染）
+4. AI 是不是在输出大量无价值内容？（输出废话）
+5. 当前任务是否真的需要旗舰模型？（模型路由）
+6. 当前任务是否真的需要完整 reasoning？（思考等级）
+7. 这次优化到底有没有真的省钱？（效果验证 → 见"效果评估"）
+
+①~④ 属于无损优化，⑤~⑥ 属于有风险优化（需分级闸门），⑦ 属于效果验证。
+
+## 宿主能力检测（不要假装知道不知道的东西）
+
+Agent **不一定能拿到**精确的 context token 数、cache hit/miss、TTL 剩余时间。
+
+- **宿主暴露了 usage/context/cache/model 信息**（如 API 返回 usage、工具提供统计）→ 用实际数据判断。
+- **宿主不提供** → 用保守估算：按对话轮数与内容量级粗估上下文占比，标注"估算值"，不下绝对结论。
+- 禁止写死"Agent 能感知 TTL"这类假设；所有 TTL/缓存判断前先声明数据来源。
+
+## 配置加载（懒加载协议，config 保留不删）
+
+1. 开局只查 `preset:` 与 `redlines.reminders:` 两行（约 20 token），不要整文件读入。
+2. 命中默认值（balanced + reminders: true）→ 其余走 SKILL.md 内联默认。
+3. 当前任务需要具体参数（context_ratio 档位、protected_tasks、router）时，才读对应小节。
+4. 不回显全文。配置缺失/冲突 → 默认值并说明。冲突裁决：`protected_tasks` > 模块开关 > preset。
+5. 懒加载只影响上下文占用（约 1K → 约 20 token），不影响功能。
+
+## 红线守则（条件策略，非绝对规则）
+
+> 红线是**行为级约束**，不可通过配置关闭；配置只控制是否主动提醒（`redlines.reminders`）。
+> 提醒关闭 ≠ 红线失效。强烈建议用户自己遵守，效果最好。
+
+| # | 红线（条件策略） | Agent 行为 |
+|---|---|---|
+| R1 | 管理上下文生命周期，不机械坚持同一会话 | 检测到"当前会话历史已变成噪音/超长"时，权衡继续 vs 整理 vs 新开：历史噪音大 + 上下文占比高 → 建议整理或新开（带小结）；否则继续。新开/切换前先输出进度小结 |
+| R2 | 关注 Prompt Cache 命中，不机械追赶 TTL | 长时间中断后重新评估：上下文很大 + 中断久 + 缓存可能失效 + 历史噪音 → 建议整理/新开；否则直接继续。**不因"超 TTL"就催用户结束会话** |
+| R3 | 索引按需使用 | 宿主有原生 repo map / 语义搜索 → 优先用；没有且项目复杂（>500 文件或跨模块修改）→ 才建议 `AI_INDEX.md`；小项目不强制 |
+| R4 | 复杂任务先规划后执行 | 命中 `protected_tasks` 或复杂度高 → 先输出方案清单，用户确认后才动手 |
 
 ### 温馨提醒
 
-- **R1 关于切换模型**：同一对话切换大模型会破坏缓存连续性——缓存按模型/厂商隔离：同一家模型切回后（TTL 内且前缀未变）可能恢复命中；不同家完全失效。频繁切模型 = 反复交"全价重读税"。简单任务换便宜模型是合理的（见 `router`），但别在同一个复杂任务中途来回切。
-- **R2 关于缓存时间（TTL）**：不同厂商/模型的缓存时长不同——Claude 系约 5 分钟（可扩展），OpenAI 系约 5 分钟~1 小时，其余以厂商官方文档为准。不要盲信统一数值，选型时查厂商定价页。本 skill 不写死 TTL，只按 `compact_hint_threshold` 给压缩/收尾建议。
-- **R3 关于索引地图**：Codex、Claude Code、Aider 等主流工具已内置仓库索引（repo map），优先使用工具自带能力；手写 `AI_INDEX.md` 作为补充（尤其用于工具索引覆盖不到的语言或场景）。
-| R4 | 模式二：先规划后执行 | 任务复杂度高（或命中 `protected_tasks`，判定见 `references/decision-tree.md`）时，先输出方案清单，用户确认后才动手 |
+- **R1 关于切模型**：缓存按模型/厂商隔离——同家切回（TTL 内且前缀未变）可能恢复命中，跨家完全失效。简单任务换便宜模型合理（见 router），但复杂任务中途别来回切。
+- **R2 关于 TTL 数值**：Claude 系约 5 分钟（可扩展）、OpenAI 系约 5 分钟~1 小时，其余以官方为准。TTL 只影响计费折扣，不影响上下文可用性。
+- **R3 关于索引**：Codex / Claude Code / Aider 已内置 repo map，优先用工具自带能力。
 
-### 提醒开关语义
+## 分级闸门（L0 Context / L1 Output / L2 Reasoning-Model）
 
-- `redlines.reminders: true`（默认）：在上述触发点主动提醒用户，并给出原因。
-- `redlines.reminders: false`：**静默遵守**——不主动啰嗦；仅在用户明确做出违反红线的操作时，给一句简短提示，其余情况不打扰。
+| 级别 | 定位 | 手段 | 默认 |
+|---|---|---|---|
+| L0 Context 优化 | 减少垃圾 | 删冗余、精确搜索、按需读取、避免重复解释、上下文隔离（subagent）、缓存友好排序 | 永远开 |
+| L1 Output 优化 | 减少表达 | 输出压缩（禁寒暄/diff-only/默认简版）、摘要历史、减少过程描述 | 按 preset |
+| L2 Reasoning/Model 优化 | 动模型能力 | /compact 全量压缩、模型降档、降低 reasoning | 默认关，显式开启 |
+
+**边界修正（不是"无损"的，要明说）**：
+- **diff-only 是输出压缩（L1），不是 L0 无损**。默认"diff + 一行结果"；复杂修改（多文件/高风险）给"diff + 影响范围 + 风险 + 测试结果"；用户要求解释时恢复详细输出。
+- **subagent 隔离是"减少上下文污染"（L0），不保证省 token**——subagent 自身也消耗 token（parent 指令 + subagent 输入/输出 + 回传摘要）。它的价值是防止探索结果污染主上下文。
+- **force_precise_ref 用 auto，不强制**：用户给了精确位置直接用；没给 → agent 先做最小范围搜索；搜索范围明确不追问；范围巨大才询问用户。
+- **router 是策略层，不是切换执行器**：agent 只做任务分类并**推荐** light/heavy；实际切换由宿主决定；宿主不支持动态切换时，改为提示用户手动切。
+
+**Protected Tasks（禁压名单，命中则 L2 全禁、L1 仅输出压缩）**：
+architecture_design, large_refactor, tricky_bug, teaching, security_review,
+**payment, authentication, authorization, database_migration, production_incident,
+data_migration, performance_optimization, api_contract_change, dependency_upgrade**
+
+自动进名单信号：同一问题修正 ≥2 次；用户要求解释；任务涉支付/鉴权/权限/密钥；用户说"质量优先"。
+
+## 上下文占比分级（替代写死的 token 阈值）
+
+```
+context_ratio = 当前上下文估算 / 模型 context window（宿主不提供则粗估）
+  < 30%    正常，不干预
+  30~50%   观察，留意历史增长
+  50~70%   提醒整理：优先 /compact 或精简历史
+  70~85%   强烈建议整理：或结束当前上下文、带小结新开
+  > 85%    建议结束当前上下文（此时继续 = 高成本 + 注意力分散）
+```
+
+判断不只看 token 数，综合：context size + utilization + task state + cache status + correction count。
 
 ## 工作流
 
 ### 会话开局
-1. 读取配置（见"配置加载"）。
-2. 若为代码任务且配置要求：检查索引地图是否存在（R3）。
-3. 输出纪律与输入瘦身规则生效（见下）。
+1. 宿主能力检测（能否拿到 usage/cache/model 信息）。
+2. 懒加载配置（preset / reminders 两行）。
+3. 代码任务按 R3 判断索引策略。
 
 ### 会话执行中（每轮）
-1. **输出纪律**：按 `output_discipline.strictness` 执行（禁寒暄、diff-only、默认简版）。
-2. **输入瘦身**：优先精确引用（文件+符号+行号）；宽检索丢给 subagent；静态内容前置、动态内容后置。
-3. **上下文卫生**：上下文超过 `clear_hint_threshold` / `compact_hint_threshold` 时，按配置提示（受 `redlines.reminders` 控制）。
-4. **分级闸门**：按 `references/decision-tree.md` 判定当前任务适用的 L 级别，有损手段只在放行时使用。
-5. **返工检测**：同一问题被修正 ≥2 次 → 提示"上下文可能被失败尝试污染，建议重开并重新组织 prompt"。
+1. 七问自检（快速过，重点 ①③⑦）。
+2. 按 L 级别执行：L0 手段常态生效；L1/L2 按闸门放行。
+3. 上下文占比超 50% 时按分级提示（受 reminders 控制）。
+4. 记录评估指标（见"效果评估"）。
 
 ### 会话收尾
-1. 若配置 `context_hygiene.overnight_summary: true`：输出"进度小结 + 待办 + 下一步"。
-2. 若用户要切换新会话：先给小结（R1），再允许切换。
+1. 输出"进度小结 + 待办 + 下一步"（`context_hygiene.overnight_summary`）。
+2. 输出/记录本次任务评估（见下）。
+
+## 效果评估（核心模块：把"我觉得省了"变成"测出来省了"）
+
+### 记录指标（每任务）
+```
+task: 任务名
+model: 使用的模型
+input_tokens / output_tokens / cache_hit(宿主提供则记)
+retry_count / correction_count
+task_success: true|false
+```
+
+### 估算成本
+```
+estimated_cost = input×P_in + output×P_out
+  （有 cache 数据时：命中部分按缓存价计）
+with_default = 按默认策略（不优化）估算
+savings = 1 - estimated_cost / with_default
+```
+
+### 报告（用户输入 `/token-wise report` 时输出）
+```
+任务：auth 模块重构
+模型：Sonnet 4.5
+输入：32K ｜ 输出：4K ｜ 缓存命中：72% ｜ 重试：0 ｜ 修正：1
+估算成本：$0.18
+默认策略估算：$0.31
+节省：42% ｜ 任务成功：是
+```
+
+### 数据落地
+- 记录到会话内即可；宿主支持时写入 `.token-wise/stats.json`（可用 `scripts/estimate_cost.py` 离线算账）。
+- 有统计数据后，README 的可信度来自实测，而不是"理论上省"。
 
 ## Token 预算（本 skill 自身的成本）
 
-- 常驻加载：SKILL.md（约 1.5K token）+ config 懒加载（仅 preset/reminders 两行，约 20 token）。
-- 按需加载：`references/*`（决策树/模板，每次几百 token，仅判定或取模板时读）；config 具体小节（用到才读）。
-- 总常驻成本约 1.5~2K token/会话——这是"纪律型 skill"的固定开销，已控制在最小。
-- 极简模式：只需要红线 + 输出纪律时，删除 `config/` 与 `references/`，单文件 SKILL.md 即可运行（所有行为用内联默认值）。
-
-## 分级闸门（L0 / L1 / L2）
-
-| 级别 | 手段 | 默认 |
-|---|---|---|
-| L0 无损 | 删冗余、缓存友好排序、精确引用、索引地图、subagent 隔离、输出格式约束 | 永远开启 |
-| L1 轻度有损 | 输出压缩（Caveman 式）、summary 型历史管理、/clear 建议 | 按 `preset` |
-| L2 重度有损 | /compact 全量压缩、模型降档、关闭/降低思考 | 默认关闭，需显式开启 |
-
-- 判定规则见 `references/decision-tree.md`。
-- `protected_tasks` 中的任务类型**禁止**使用 L2，且 L1 仅限输出压缩。
-- 路由与思考控制：按 `router` 与 `thinking` 配置执行；`thinking.mode: auto` 时按任务复杂度给档位，禁止全局关闭思考。
-
-## 提示词模板
-
-可直接复用的模板见 `references/prompt-templates.md`（模式二两阶段、确认开工、长会话收尾、新会话开局、索引地图生成）。
+- 常驻：SKILL.md（约 2K token）+ config 懒加载（约 20 token）。
+- 按需：references/*（几百 token）、config 小节（用到才读）。
+- 总常驻约 2K token/会话。极简模式：只留红线 + 输出纪律时，删 config/ 与 references/ 单文件可跑。
 
 ## 资源说明
 
-- `config/token-wise.config.md` — 用户唯一需要编辑的配置文件（三档预设 + 模块开关 + 红线提醒开关 + 豁免表）。
-- `references/decision-tree.md` — 分级闸门判定决策树（agent 查表用）。
-- `references/prompt-templates.md` — 各场景提示词模板与好坏示例对比。
+- `config/token-wise.config.md` — 用户唯一需要编辑的配置（预设 + 模块开关 + 红线提醒 + 豁免表）。
+- `references/decision-tree.md` — 分级闸门 + 上下文占比判定（agent 查表）。
+- `references/evaluation.md` — 效果评估指标与报告模板。
+- `scripts/estimate_cost.py` — 离线成本估算脚本（可选）。
