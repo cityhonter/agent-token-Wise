@@ -33,11 +33,12 @@
 
 ## 配置
 
-只改一个文件：`token-wise/config/token-wise.config.md`
+只改一个文件：`token-wise/config/token-wise.config.md`（**保留即可，不用删**）
 
 1. **三档预设**：`preset: conservative / balanced / aggressive`
 2. **模块开关**：输出纪律、输入瘦身、上下文卫生、思考控制、路由——每个都能独立开/关/调参
 3. **红线提醒开关**：见下节
+4. **懒加载协议**：skill 默认只查 `preset` 与 `redlines.reminders` 两行（约 20 token），其余字段按需读对应小节——config 常驻开销从约 1K token 降到约 20 token，**不影响任何功能**，没改过的字段永远不会被读
 
 ## 红线守则（重要，请务必阅读）
 
@@ -65,9 +66,9 @@
 
 ## 本 skill 自身的 token 成本
 
-- 常驻加载：SKILL.md（约 1.5K token）+ config（约 1K token）。
-- 按需加载：references/（决策树、提示词模板，每次几百 token）。
-- 总常驻成本约 **2~3K token/会话**——这是"纪律型 skill"的固定开销。
+- 常驻加载：SKILL.md（约 1.5K token）+ config 懒加载（仅 preset/reminders 两行，约 20 token）。
+- 按需加载：references/（决策树、提示词模板，每次几百 token）；config 具体小节（用到才读）。
+- 总常驻成本约 **1.5~2K token/会话**——这是"纪律型 skill"的固定开销。
 - **极简模式**：只需要红线 + 输出纪律时，删掉 config/ 和 references/，单文件 SKILL.md 即可运行。
 
 > 别让"省 token 的 skill"自己变成 token 大户——所以本 skill 刻意把细节都放进

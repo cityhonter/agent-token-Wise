@@ -14,13 +14,17 @@ agent_created: true
 2. **省钱指标 = 每件完成的事的成本**，不是每个 token 的成本。返工、重试、瞎改三件事烧掉的钱，永远大于 token 差价。
 3. **有损手段必须分级授权**：默认只开无损层（L0），有损层（L1/L2）按配置与任务类型放行。
 
-## 配置加载
+## 配置加载（解法 3：懒加载 + 只提取，config 保留不删）
 
-1. 定位配置文件 `config/token-wise.config.md`（随 skill 分发，或用户自定义位置）。
-2. 读取其中 `preset`（conservative / balanced / aggressive）与本次任务相关的开关；只提取所需字段，不要将整个配置文件复述进回复。
-3. 若配置缺失或字段冲突：按默认值（balanced + 全部默认开启项）执行，并在回复中说明"使用了默认配置"。
-4. 冲突裁决规则：`protected_tasks` 优先级 > 模块开关 > preset。
-5. **配置瘦身的说明**："只提取字段"只影响 agent 的回复与引用方式，不影响功能（值都已读到）；若删除 config 文件，则回到 SKILL.md 内联默认值——功能不缺失，仅丢失自定义项。
+`config/token-wise.config.md` 文件**保留**，但按懒加载协议读取，避免全文进上下文：
+
+1. **开局只查两行**：用搜索/grep 读取 `preset:` 与 `redlines.reminders:` 两行（约 20 token），不要整文件读入上下文。
+2. **命中默认值则跳过**：`preset: balanced` 且 `reminders: true`（即未定制）时，其余全部走 SKILL.md 内联默认值，config 不再读。
+3. **按需读小节**：仅当当前任务需要具体参数（阈值 `clear_hint_threshold` / `compact_hint_threshold`、`protected_tasks` 豁免表、`router` 模型映射）时，才读取对应小节。
+4. **不回显**：任何情况下不把配置文件内容复述进回复，只在使用时引用数值。
+5. 若配置文件缺失或字段冲突：按默认值（balanced + 全部默认开启项）执行，并在回复中说明"使用了默认配置"。
+6. 冲突裁决规则：`protected_tasks` 优先级 > 模块开关 > preset。
+7. **影响说明**：懒加载只影响上下文占用（约 1K token → 约 20 token），不影响功能——用到哪个参数就读哪个，全部字段仍可生效。
 
 ## 红线守则（不可违反，行为级约束）
 
@@ -66,9 +70,9 @@ agent_created: true
 
 ## Token 预算（本 skill 自身的成本）
 
-- 常驻加载：SKILL.md（约 1.5K token）+ config（约 1K token）。
-- 按需加载：`references/*`（决策树/模板，每次几百 token，仅判定或取模板时读）。
-- 总常驻成本约 2~3K token/会话——这是"纪律型 skill"的固定开销，已控制在最小。
+- 常驻加载：SKILL.md（约 1.5K token）+ config 懒加载（仅 preset/reminders 两行，约 20 token）。
+- 按需加载：`references/*`（决策树/模板，每次几百 token，仅判定或取模板时读）；config 具体小节（用到才读）。
+- 总常驻成本约 1.5~2K token/会话——这是"纪律型 skill"的固定开销，已控制在最小。
 - 极简模式：只需要红线 + 输出纪律时，删除 `config/` 与 `references/`，单文件 SKILL.md 即可运行（所有行为用内联默认值）。
 
 ## 分级闸门（L0 / L1 / L2）
