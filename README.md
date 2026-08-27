@@ -79,7 +79,7 @@ Conversation History（对话记录）→ Context（上下文）→ Prompt Cache
 | R4 | 复杂任务先规划后执行 | 命中保护名单或复杂度高 → 先出方案，确认后动手 |
 
 > **温馨提醒**
-> - 切对话框：缓存命中会失效
+> - 新建对话框：新对话框中的缓存命中率极低，会重读代码要重新计算。
 > - 切模型：缓存按模型/厂商隔离——同家切回（TTL 内且前缀未变）可能恢复命中，跨家完全失效；简单任务换便宜模型合理，复杂任务中途别来回切。
 > - TTL：Claude 系约 5 分钟（可扩展）、OpenAI 系约 5 分钟~1 小时，其余以官方文档为准。
 > - 任务中断后：同一会话内直接继续即可；是否整理看上下文占比与噪音，不看中断时长。
@@ -126,7 +126,8 @@ A: 支持。router 留空即不干预模型选择，机制本身与厂商无关�
 - [x] v1：无损优先 + L0/L1/L2 分级 + 红线
 - [x] v2：概念澄清（History/Context/Cache/Billing）、Context Hygiene、上下文占比分级
 - [x] v3：效果评估 + 离线成本脚本
-- [ ] benchmark：同一批真实 coding tasks 对比默认 / balanced / aggressive，输出 token reduction、cost reduction、task success rate、retry rate、quality regression
+- [x] benchmark 基建：12 个真实编码任务集（benchmark/tasks.md）+ A/B 运行协议（benchmark/run.md）+ 汇总脚本（benchmark/collect_results.py）
+- [ ] benchmark 实测：跑出数据后在此贴对比表（token reduction / cost reduction / success rate / retry rate / quality regression）
 
 ## License
 
